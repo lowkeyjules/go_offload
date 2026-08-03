@@ -1,0 +1,13 @@
+# Exclude IDE artifacts
+.idea/
+bin/
+
+# Exclude specific file types
+*.wasm
+*.exe
+*.out
+
+# Exclude directories
+offloadables/
+broker/
+docker/

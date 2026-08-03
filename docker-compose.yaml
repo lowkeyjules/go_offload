@@ -1,0 +1,35 @@
+services:
+  # start a broker image
+  broker:
+    image: ghcr.io/wasimoff/broker
+    platform: linux/amd64
+    restart: on-failure:3
+    ports:
+      - 4080:4080
+    volumes:
+      - ./broker/broker_storage:/broker_storage
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4080/healthz"]
+      interval: 2s
+    environment:
+      # listen on this address
+      WASIMOFF_HTTP_LISTEN: ":4080"
+      # allow requests from local frontend dev
+      WASIMOFF_ALLOWED_ORIGINS: localhost:5173
+      # store uploaded binaries in volume
+      WASIMOFF_FILESTORAGE: /broker_storage
+      # enable pprof and metrics endpoints
+      WASIMOFF_DEBUG: "true"
+      WASIMOFF_METRICS: "true"
+      # enable benchmode with endless tasks
+      #WASIMOFF_BENCHMODE=32
+
+  # .. as well as a provider, to be able to compute some tasks
+  provider:
+    image: ghcr.io/wasimoff/provider
+    platform: linux/amd64
+    restart: unless-stopped
+    depends_on:
+      broker:
+        condition: service_healthy
+    command: ["--url", "http://broker:4080", "--workers", "2", "--retry"]
