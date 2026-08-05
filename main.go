@@ -20,5 +20,3 @@ func main() {
 	// Put your Submit/Dispatch - Calls here
 
 }
-
-// TODO copy multiple functions into wrapper file

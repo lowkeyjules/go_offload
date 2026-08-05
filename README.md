@@ -1,6 +1,12 @@
 # Go Offload
 ___
-Go Offload is a research prototype developed to accelerate the workflow for offloading WebAssembly (Wasm) modules.
+
+**Computation offloading** is the act of moving computation away from local execution onto less constrained devices.
+This includes cloud servers, edge devices as well as hardware accelerators like GPUs and FPGAs.
+There are many different reasons for offloading, although most cases involve offloading from mobile devices like phones, 
+due to technical limitations and battery constraints.
+
+**Go Offload** is a research prototype developed to accelerate the workflow for offloading WebAssembly (Wasm) modules.
 It is designed to work together with the framework [Wasimoff](https://github.com/wasimoff/wasimoff), which is used as the computational backend.
 The core idea of this tool is to use annotations to reduce the amount of work a developer has to  do before offloading a module.
 
@@ -18,6 +24,11 @@ The above listed functions are all handled at runtime.
 
 This tool is currently still under development and might undergo some changes in the future.
 
+> [NOTE]
+> This project is part of an ongoing research study. If you try Go Offload, I'd appreciate it if you filled out [this survey](https://forms.gle/QdQvoCPe7SATBibY8) (~5-10 minutes, anonymous) afterward.
+> Some parts of the survey also require you to have read the [Manual Workflow: Offloading without annotations](#manual-workflow-offloading-without-annotations) section.
+
+
 ## How it works
 ___
 The process can be split into two parts. 
@@ -26,21 +37,12 @@ In the first half the WebAssembly modules are built and uploaded to the backend,
 By initializing the Offloader and passing the target file for parsing, the parser scans the file for ``// offload``
 annotations, creates the same amount of Wasm files as there are annotated functions and uploads them to Wasimoff's broker.
 The program checks whether these modules are already uploaded by comparing their SHA256 encodings to those in the remote storage.
-If they do not exist yet, they are uploaded, if they do, the program proceeds.
+If they do not exist yet, they are uploaded. If they do, the program proceeds.
 ```go
-// Use exported types for the input Struct so that it can be transmitted on the wire
-type InputNumbers struct{
-	FirstSummand int
-	SecondSummand int
-}
-
-// The Input is limited to exactly one struct with arbitrary field types
-// The return also expects exactly one parameter, can be any go-specific or non-specific type
-
 // offload
-func(in InputNumbers) int {
-	return in.FirstSummand + in.SecondSummand
-} // compiles to .wasm target and uploads to the offloading backend
+func add(in InputStruct) int {
+	return in.First + in.Second
+}
 ```
 
 All modules are based on the same code skeleton. Used imports as well as all kinds of struct declarations are copied into the Wasm modules to avoid 
@@ -65,8 +67,8 @@ T is referring to [T any] which is a declaration for T as the 'any' type.
 The 'any' type is used in Go generics, where it acts as a constraint for primitive datatypes as well as structs, maps and other Go-specific types. 
 
 The return does not have the same restrictions as the input type and can be any type.
-The submit/dispatch calls use the case-sensitive name of the function to load their sha-encodings and reference them on the uploading framework.
-Parameters are transmitted as one serialized base64 encoded hexadecimal string that is passed as an argument into the Wasm binary, which is 
+The Submit/Dispatch calls use the case-sensitive name of the function to load their SHA-encodings and reference them on the uploading framework.
+Parameters are transmitted as one Gob-serialized, base64-encoded string that is passed as an argument into the Wasm binary, which is 
 being decoded within the Wasm module and injected as the input into the function.
 
 ## Usage
@@ -106,16 +108,25 @@ It might look something like this:
 ````go
 import "go_offload/offload"
 
+// Use exported types for the input Struct so that it can be transmitted on the wire
 type GreetParam struct {  
     Name string  
-}  
+}
+
+// The Input is limited to exactly one struct with arbitrary field types
+// The return also expects exactly one parameter, can be any go-specific or non-specific type
 
 // offload    
 func Greetings(g GreetParam) string{
     return "Hello, " + g.Name + "!"
 }
 
-func main(){...}
+
+func main(){
+	    // Initialization of the Offloader as well as the 
+	    // Submit/Dispatch Calls go here.
+	    // Finally, don't forget to call Close()
+	}
 ````
 
 Note that all fields of a struct should be declared in uppercase, so that these types are exported by Gob.
@@ -265,6 +276,4 @@ return
 fmt.Println("result:", string(resultBytes))
 ```
 
-All of these 5 steps are prone to error. Reducing them to a simple `// offload` annotation and few simple API-calls can reduce the effort required to offload a computation.
-
-
+All of these 5 steps are prone to error. Reducing them to a simple `// offload` annotation and few simple API-calls can significantly reduce the effort required to offload computation.
