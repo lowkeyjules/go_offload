@@ -4,19 +4,19 @@ import (
 	"go_offload/offload"
 )
 
-// Define your Input Struct
+// TODO Define your Input Struct here
 
-// Define your offloadable function
+// TODO Define your Offloadable Function here
 
 func main() {
 
 	url := "http://localhost:4080"
 
 	// Offloading logic starts here
-
 	o := offload.OpenOffload(url, 5, "main.go")
 	defer o.Close()
 
-	// Put your Submit/Dispatch - Calls here
+	// TODO Put your Submit/Dispatch-Calls here
 
 }
+
