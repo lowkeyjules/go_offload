@@ -8,6 +8,6 @@ bin/
 *.out
 
 # Exclude directories
-offloadables/
+offload/targetfiles/
 broker/
 docker/
