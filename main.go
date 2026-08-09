@@ -4,9 +4,10 @@ import (
 	"go_offload/offload"
 )
 
-// TODO Define your Input Struct here
+// TODO Define your Input Struct
 
-// TODO Define your Offloadable Function here
+// TODO Define your offloadable function
+// add 'offload' annotation
 
 func main() {
 
@@ -16,7 +17,6 @@ func main() {
 	o := offload.OpenOffload(url, 5, "main.go")
 	defer o.Close()
 
-	// TODO Put your Submit/Dispatch-Calls here
-
+	// TODO Put your Submit/Dispatch - Calls here
 }
 

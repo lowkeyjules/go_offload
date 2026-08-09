@@ -2,6 +2,7 @@ package offload
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -15,6 +16,9 @@ import (
 	"strconv"
 	"strings"
 )
+
+//go:embed template.txt
+var wasmTemplate string
 
 // nur noch der Name des Structs, das rein und raus geht
 type FuncMeta struct {
@@ -35,7 +39,10 @@ func NewParser(file string) *Parser {
 func (p *Parser) parse() {
 
 	makedir := "./offload/offloadables"
+	makedirTarget := "./offload/targetfiles"
+
 	os.Mkdir(makedir, 0755)
+	os.Mkdir(makedirTarget, 0755)
 
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, p.FileToParse, nil, parser.ParseComments)
@@ -68,7 +75,6 @@ func (p *Parser) parse() {
 			return true
 		}
 
-		content, err := os.ReadFile("offload/wasmtemplate/template.txt")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -77,7 +83,7 @@ func (p *Parser) parse() {
 		for _, comment := range fn.Doc.List {
 			if strings.HasPrefix(comment.Text, "// offload") || strings.HasPrefix(comment.Text, "//offload") {
 
-				code := string(content)
+				code := wasmTemplate
 
 				payload, err := payloadType(file, fn)
 				if err != nil {
@@ -106,7 +112,9 @@ func (p *Parser) parse() {
 					code = string(pretty)
 				}
 
-				input := "./offload/wasmtemplate/" + fn.Name.Name + ".go"
+				os.Mkdir("./offload/targetfiles", 0755)
+
+				input := "./offload/targetfiles/" + fn.Name.Name + ".go"
 				output := "./offload/offloadables/" + fn.Name.Name + ".wasm"
 
 				os.WriteFile(
@@ -294,3 +302,4 @@ func collectTypeDecls(fset *token.FileSet, file *ast.File) string {
 	}
 	return buf.String()
 }
+
