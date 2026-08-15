@@ -8,11 +8,13 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -24,18 +26,18 @@ import (
 
 type Orchestrator struct {
 	// User config parameter
-	Url     string
-	File    string
-	Timeout time.Duration
+	url     string
+	file    string
+	timeout time.Duration
 
 	// Objects used by Orchestrator
-	Parser *Parser
-	Param  *Parametrizer
+	parser *fileParser
+	param  *parametrizer
 
 	// Offloading helper
-	Offloadables chan Message
-	Refs         map[string]string
-	RefsRemote   map[string]bool
+	offloadables chan message
+	refs         map[string]string
+	refsRemote   map[string]bool
 	wasimoff     client.WasimoffClient
 	wg           sync.WaitGroup
 }
@@ -56,20 +58,20 @@ func OpenOffload(url string, timeout int, file string) *Orchestrator {
 	}
 
 	o := &Orchestrator{
-		Offloadables: make(chan Message, 100),
-		Url:          url,
-		Timeout:      time.Second * time.Duration(timeout),
-		Parser:       NewParser(file),
-		Param:        NewParametrizer(),
-		Refs:         make(map[string]string),
+		offloadables: make(chan message, 100),
+		url:          url,
+		timeout:      time.Second * time.Duration(timeout),
+		parser:       newFileParser(file),
+		param:        newParametrizer(),
+		refs:         make(map[string]string),
 	}
 
 	if !isBrokerUp(url) {
 		panic("Broker down: check Broker connection")
 	}
 
-	o.wasimoff = client.NewWasimoffConnectRpcClient(http.DefaultClient, o.Url)
-	log.Printf("connecting to Broker at %s ...", o.Url)
+	o.wasimoff = client.NewWasimoffConnectRpcClient(http.DefaultClient, o.url)
+	log.Printf("connecting to Broker at %s ...", o.url)
 
 	o.uploadAll()
 
@@ -80,8 +82,8 @@ func OpenOffload(url string, timeout int, file string) *Orchestrator {
 }
 
 func (o *Orchestrator) uploadAll() {
-	names := make([]string, 0, len(o.Parser.FuncMetas))
-	for name := range o.Parser.FuncMetas {
+	names := make([]string, 0, len(o.parser.funcMetas))
+	for name := range o.parser.funcMetas {
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -90,7 +92,7 @@ func (o *Orchestrator) uploadAll() {
 	if err != nil {
 		panic(fmt.Errorf("error fetching shas: %w", err))
 	}
-	o.RefsRemote = remote
+	o.refsRemote = remote
 
 	for _, name := range names {
 		if _, err := o.ensureUploaded(o.wasimoff, name); err != nil {
@@ -100,17 +102,14 @@ func (o *Orchestrator) uploadAll() {
 }
 
 func (o *Orchestrator) runTask() {
-	ctx, cancel := context.WithTimeout(context.Background(), o.Timeout)
-	defer cancel()
+	for msg := range o.offloadables {
 
-	for msg := range o.Offloadables {
-
-		ref, ok := o.Refs[msg.Offloadable]
+		ref, ok := o.refs[msg.offloadable]
 		if !ok {
-			msg.result <- Result{
-				Offloadable: msg.Offloadable,
-				Args:        msg.ArgsSerialized,
-				Err:         fmt.Errorf("%s: no uploaded module, is the function marked with // offload?", msg.Offloadable),
+			msg.result <- result{
+				offloadable: msg.offloadable,
+				args:        msg.argsSerialized,
+				err:         fmt.Errorf("%s: no uploaded module, is the function marked with // offload?", msg.offloadable),
 			}
 			o.wg.Done()
 			continue
@@ -119,8 +118,12 @@ func (o *Orchestrator) runTask() {
 		file := &wasimoffv1.File{Ref: &ref}
 
 		// offloading takes place here
-		go func(m Message) {
+		go func(m message) {
 			defer o.wg.Done()
+
+			ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
+			defer cancel()
+
 			r := o.run(ctx, o.wasimoff, m, file)
 			m.result <- r
 		}(msg)
@@ -128,44 +131,48 @@ func (o *Orchestrator) runTask() {
 	o.wg.Wait()
 }
 
-func (o *Orchestrator) run(ctx context.Context, wasimoff client.WasimoffClient, m Message, file *wasimoffv1.File) Result {
-	result := Result{
-		Offloadable: m.Offloadable,
-		Args:        m.ArgsSerialized,
+func (o *Orchestrator) run(ctx context.Context, wasimoff client.WasimoffClient, m message, file *wasimoffv1.File) result {
+	result := result{
+		offloadable: m.offloadable,
+		args:        m.argsSerialized,
 	}
 
-	binary := m.Offloadable + ".wasm"
+	binary := m.offloadable + ".wasm"
 	request := wasimoffv1.Task_Wasip1_Request{
 		Params: &wasimoffv1.Task_Wasip1_Params{
 			Binary: file,
-			Args:   []string{binary, result.Args},
+			Args:   []string{binary, result.args},
 		},
 	}
 
 	response, err := wasimoff.RunWasip1(ctx, &request)
 	if err != nil {
-		result.Err = err
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			result.err = fmt.Errorf("%s timed out after %s", binary, o.timeout)
+		} else {
+			result.err = err
+		}
 		return result
 	}
 
 	if e := response.GetError(); e != "" {
-		result.Err = fmt.Errorf("%s: %s", binary, e)
+		result.err = fmt.Errorf("%s: %s", binary, e)
 		return result
 	}
 
 	out := response.GetOk()
 	if out == nil {
-		result.Err = fmt.Errorf("%s: keine Ausgabe vom Broker", binary)
+		result.err = fmt.Errorf("%s: no output from broker", binary)
 		return result
 	}
 
-	result.Stderr = strings.TrimSpace(string(out.GetStderr()))
+	result.stderr = strings.TrimSpace(string(out.GetStderr()))
 	if status := out.GetStatus(); status != 0 {
-		result.Err = fmt.Errorf("%s: exit status %d: %s", binary, status, result.Stderr)
+		result.err = fmt.Errorf("%s: exit status %d: %s", binary, status, result.stderr)
 		return result
 	}
 
-	result.Output = out.GetStdout()
+	result.output = out.GetStdout()
 	return result
 }
 
@@ -174,38 +181,38 @@ func SubmitAll[T any](o *Orchestrator, name string, payloads ...any) ([]T, []err
 		panic("either name or payload(s) not specified")
 	}
 
-	meta, ok := o.Parser.FuncMetas[name]
+	meta, ok := o.parser.funcMetas[name]
 	if !ok {
 		panic(name + " is not marked with // offload")
 	}
 
-	results := make([]Result, len(payloads))
-	msgs := make(map[int]Message, len(payloads))
+	results := make([]result, len(payloads))
+	msgs := make(map[int]message, len(payloads))
 
 	for i, payload := range payloads {
-		if err := o.Param.CheckPayload(payload, meta); err != nil {
-			results[i] = Result{Offloadable: name, Err: err}
-			log.Printf("submit %q failed: %v, continuing", name, results[i].Err)
+		if err := o.param.checkPayload(payload, meta); err != nil {
+			results[i] = result{offloadable: name, err: err}
+			log.Printf("submit %q failed: %v, continuing", name, results[i].err)
 			continue
 		}
 
-		serialized, err := o.Param.EncodeGob(payload)
+		serialized, err := o.param.encodeGob(payload)
 		if err != nil {
-			results[i] = Result{Offloadable: name, Err: err}
+			results[i] = result{offloadable: name, err: err}
 			log.Printf("decode %q failed: %v, continuing", name, err)
 			continue
 		}
 
-		msgs[i] = Message{
-			Offloadable:    name,
-			ArgsSerialized: serialized,
-			result:         make(chan Result, 1),
+		msgs[i] = message{
+			offloadable:    name,
+			argsSerialized: serialized,
+			result:         make(chan result, 1),
 		}
 	}
 
 	for _, msg := range msgs {
 		o.wg.Add(1)
-		o.Offloadables <- msg
+		o.offloadables <- msg
 	}
 
 	for i, msg := range msgs {
@@ -217,9 +224,6 @@ func SubmitAll[T any](o *Orchestrator, name string, payloads ...any) ([]T, []err
 
 	for i := range results {
 		v, err := decodeReturn[T](results[i])
-		if err != nil {
-			log.Printf("offload failed for call %q, %d, %v", name, i, err)
-		}
 		values[i] = v
 		errs[i] = err
 	}
@@ -253,14 +257,14 @@ func DispatchAll[T any](o *Orchestrator, name string, payloads ...any) (chan []T
 	return valCh, errCh
 }
 
-func decodeReturn[R any](r Result) (R, error) {
+func decodeReturn[R any](r result) (R, error) {
 	var v R
-	if r.Err != nil {
-		return v, r.Err
+	if r.err != nil {
+		return v, r.err
 	}
 
 	var wrapped wireReturn
-	if err := gob.NewDecoder(bytes.NewReader(r.Output)).Decode(&wrapped); err != nil {
+	if err := gob.NewDecoder(bytes.NewReader(r.output)).Decode(&wrapped); err != nil {
 		return v, fmt.Errorf("decode wrapper gob: %w", err)
 	}
 
@@ -278,16 +282,20 @@ func decodeReturn[R any](r Result) (R, error) {
 }
 
 func (o *Orchestrator) Close() {
-	close(o.Offloadables)
+	close(o.offloadables)
 	o.wg.Wait()
 }
 
 func loadWasm(name string) ([]byte, error) {
-	return os.ReadFile("./offload/offloadables/" + name + ".wasm")
+	dir, err := offloadblesDir()
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(filepath.Join(dir, "offloadables", name+".wasm"))
 }
 
 func (o *Orchestrator) ensureUploaded(wasimoff client.WasimoffClient, name string) (string, error) {
-	if ref, ok := o.Refs[name]; ok {
+	if ref, ok := o.refs[name]; ok {
 		return ref, nil
 	}
 
@@ -296,8 +304,8 @@ func (o *Orchestrator) ensureUploaded(wasimoff client.WasimoffClient, name strin
 		return "", fmt.Errorf("error loading wasm %s: %w", name, err)
 	}
 
-	if o.RefsRemote == nil {
-		o.RefsRemote, err = o.fetchStorage()
+	if o.refsRemote == nil {
+		o.refsRemote, err = o.fetchStorage()
 		if err != nil {
 			return "", fmt.Errorf("error fetching shas: %w", err)
 		}
@@ -305,11 +313,11 @@ func (o *Orchestrator) ensureUploaded(wasimoff client.WasimoffClient, name strin
 
 	sum := sha256.Sum256(wasm)
 	sha := hex.EncodeToString(sum[:])
-	if o.RefsRemote[sha] {
+	if o.refsRemote[sha] {
 		log.Printf("%s already uploaded, in broker storage \n", name)
 		ref := "sha256:" + sha
-		o.Refs[name] = ref
-		return o.Refs[name], nil
+		o.refs[name] = ref
+		return o.refs[name], nil
 	}
 
 	fmt.Println("Uploading...", name)
@@ -319,13 +327,13 @@ func (o *Orchestrator) ensureUploaded(wasimoff client.WasimoffClient, name strin
 		return "", fmt.Errorf("error uploading %s: %w", name, err)
 	}
 
-	o.Refs[name] = ref
+	o.refs[name] = ref
 	return ref, nil
 
 }
 
 func (o *Orchestrator) fetchStorage() (map[string]bool, error) {
-	urlStorage := o.Url + "/api/storage"
+	urlStorage := o.url + "/api/storage"
 
 	resp, err := http.Get(urlStorage)
 	if err != nil {

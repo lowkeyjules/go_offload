@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// ============ Greeting Example ============
+
 type GreetingParams struct {
 	Name string
 }
@@ -17,6 +19,8 @@ type GreetingParams struct {
 func Greeting(in GreetingParams) string {
 	return "Hello, " + in.Name + "!"
 }
+
+// ============ MatrixMultiplication Example ============
 
 type MatMulParams struct {
 	A [][]float64
@@ -39,6 +43,8 @@ func MatrixMultiplication(in MatMulParams) [][]float64 {
 	}
 	return out
 }
+
+// ============ Benchmark Example ============
 
 type TimingReturn struct {
 	Sum      float64
@@ -81,7 +87,7 @@ func main() {
 	o := offload.OpenOffload(url, 10, "demo.go")
 	defer o.Close()
 
-	// Submit - Offloading Examples:
+	// ========== Submit - Offloading Examples: ==========
 
 	result, err := offload.Submit[string](o, "Greeting", GreetingParams{Name: "Player 1"})
 	if err != nil {
@@ -104,7 +110,7 @@ func main() {
 	}
 	fmt.Printf("MatrixMultiplication result from Submit: %v\n", result3)
 
-	// SubmitAll - Offloading Example:
+	// ========== SubmitAll - Offloading Example: ==========
 
 	resultAll, errorAll := offload.SubmitAll[TimingReturn](o, "Benchmark", WorkloadParams{200_000_000}, WorkloadParams{100_000_000}, WorkloadParams{1_000_000})
 
@@ -118,7 +124,7 @@ func main() {
 		fmt.Printf("Result from SubmitAll: %v\n", r.Duration)
 	}
 
-	// Dispatch - Offloading Example:
+	// ========== Dispatch - Offloading Example: ==========
 
 	resCh, errCh := offload.Dispatch[[][]float64](o, "MatrixMultiplication", MatMulParams{
 		A: [][]float64{{1, 2}, {3, 4}},
@@ -134,7 +140,7 @@ func main() {
 
 	fmt.Printf("Result from Dispatch: %v\n", resultDispatch)
 
-	// DispatchAll - Offloading Example:
+	// ========== DispatchAll - Offloading Example: ==========
 
 	resAllCh, errAllCh := offload.DispatchAll[TimingReturn](o, "Benchmark",
 		WorkloadParams{200_000_000},

@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,42 +21,44 @@ import (
 //go:embed template.txt
 var wasmTemplate string
 
-// nur noch der Name des Structs, das rein und raus geht
-type FuncMeta struct {
-	Payload string
+type funcMeta struct {
+	payload string
 }
 
-type Parser struct {
-	FileToParse string
-	FuncMetas   map[string]FuncMeta
+type fileParser struct {
+	fileToParse string
+	funcMetas   map[string]funcMeta
 }
 
-func NewParser(file string) *Parser {
-	p := &Parser{FileToParse: file, FuncMetas: make(map[string]FuncMeta)}
+func newFileParser(file string) *fileParser {
+	p := &fileParser{fileToParse: file, funcMetas: make(map[string]funcMeta)}
 	p.parse()
 	return p
 }
 
-func (p *Parser) parse() {
+func (p *fileParser) parse() {
+	makeDir, err := offloadblesDir()
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	makedir := "./offload/offloadables"
-	makedirTarget := "./offload/targetfiles"
+	dirOffloadables := filepath.Join(makeDir, "offloadables")
+	dirTarget := filepath.Join(makeDir, "targetfiles")
 
-	os.Mkdir(makedir, 0755)
-	os.Mkdir(makedirTarget, 0755)
+	os.Mkdir(dirOffloadables, 0755)
+	os.Mkdir(dirTarget, 0755)
 
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, p.FileToParse, nil, parser.ParseComments)
+	file, err := parser.ParseFile(fset, p.fileToParse, nil, parser.ParseComments)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	typeDecls := collectTypeDecls(fset, file)
 
-	// Alle Importe der Datei, lokaler Name -> Pfad.
+	// all imports of the parsed file
 	available := fileImports(file)
 
-	// Die Typdeklarationen landen in jedem Modul, ihre Importe also auch.
 	typeImports := make(map[string]string)
 	for _, decl := range file.Decls {
 		gd, ok := decl.(*ast.GenDecl)
@@ -79,7 +82,7 @@ func (p *Parser) parse() {
 			log.Fatal(err)
 		}
 
-		// Checkt Kommentare
+		// checks all comments
 		for _, comment := range fn.Doc.List {
 			if strings.HasPrefix(comment.Text, "// offload") || strings.HasPrefix(comment.Text, "//offload") {
 
@@ -90,7 +93,7 @@ func (p *Parser) parse() {
 					log.Fatalf("offload %s: %v", fn.Name.Name, err)
 				}
 
-				p.FuncMetas[fn.Name.Name] = FuncMeta{Payload: payload}
+				p.funcMetas[fn.Name.Name] = funcMeta{payload: payload}
 
 				used := make(map[string]string)
 				for local, path := range typeImports {
@@ -107,15 +110,13 @@ func (p *Parser) parse() {
 				code = strings.ReplaceAll(code, "{{TYPE_DECLS}}", typeDecls)
 				code = strings.ReplaceAll(code, "{{IMPORTS}}", renderImports(used))
 
-				// nur Kosmetik, damit die generierte Datei lesbar bleibt
+				// formatting for readability
 				if pretty, ferr := format.Source([]byte(code)); ferr == nil {
 					code = string(pretty)
 				}
 
-				os.Mkdir("./offload/targetfiles", 0755)
-
-				input := "./offload/targetfiles/" + fn.Name.Name + ".go"
-				output := "./offload/offloadables/" + fn.Name.Name + ".wasm"
+				input := filepath.Join(dirTarget, fn.Name.Name+".go")
+				output := filepath.Join(dirOffloadables, fn.Name.Name+".wasm")
 
 				os.WriteFile(
 					input,
@@ -143,22 +144,22 @@ func payloadType(file *ast.File, fn *ast.FuncDecl) (string, error) {
 
 	params := fn.Type.Params.List
 	if len(params) != 1 || len(params[0].Names) > 1 {
-		return "", fmt.Errorf("braucht genau einen Parameter (das Payload-Struct)")
+		return "", fmt.Errorf("requires exactly one parameter (the payload struct)")
 	}
 
 	ident, ok := params[0].Type.(*ast.Ident)
 	if !ok {
-		return "", fmt.Errorf("Parameter muss ein in main.go deklariertes Struct sein")
+		return "", fmt.Errorf("input struct needs to be declared within the parsed file")
 	}
 
 	st := findStruct(file, ident.Name)
 	if st == nil {
-		return "", fmt.Errorf("Parameter %s ist kein in main.go deklariertes Struct", ident.Name)
+		return "", fmt.Errorf("parameter %s is not declared in the parsed file", ident.Name)
 	}
 
 	results := fn.Type.Results
 	if results == nil || len(results.List) != 1 {
-		return "", fmt.Errorf("muss genau einen Wert zurueckgeben")
+		return "", fmt.Errorf("function needs to return a single result type")
 	}
 
 	return ident.Name, nil
@@ -194,7 +195,6 @@ func fileImports(file *ast.File) map[string]string {
 		}
 		local := lastElem(path)
 		if imp.Name != nil {
-			// _ und . koennen wir nicht sinnvoll uebernehmen
 			if imp.Name.Name == "_" || imp.Name.Name == "." {
 				continue
 			}
@@ -223,7 +223,7 @@ func usedImports(node ast.Node, available map[string]string, used map[string]str
 }
 
 func renderImports(used map[string]string) string {
-	// Pfad -> Alias, Alias leer wenn keiner noetig
+	// mapping path to alias
 	paths := map[string]string{
 		"bytes":           "",
 		"encoding/base64": "",
@@ -303,3 +303,15 @@ func collectTypeDecls(fset *token.FileSet, file *ast.File) string {
 	return buf.String()
 }
 
+func offloadblesDir() (string, error) {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("could not determine cache dir: %w", err)
+	}
+	dir := filepath.Join(cacheDir, "go_offload")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("could not create go_offload directory: %w", err)
+	}
+
+	return dir, nil
+}

@@ -99,7 +99,7 @@ go run main.go
 ```
 
 ### Using the Go Offloader
-Now you can use the demo.go as an existing example and experiment in the provided environment, the main.go file.
+Now you can use the `./examples/demo.go` as an existing example and continue experimenting in the provided environment, the main.go file.
 
 Before the main-function, define the functions you want to offload and add the ``// offload`` annotation.
 Define the input structs, as well as all other structs that might get used within your function. 
@@ -160,8 +160,10 @@ Have fun trying out Go Offload!
 
 ## Manual Workflow: Offloading without annotations
 ___
-This paragraph provides an example of how the offloading looks like without using annotation-driven tools.
+This section provides an overview of how the offloading looks like without using annotation-driven tools.
 The following illustrates a minimal example of how the usual offloading pipeline looks like.
+
+You can find the complete implementation of this in the `manual_workflow` folder.
 
 ### 1. Writing the Offloadable Module
 The target file will be compiled to WASIp1. This format can receive input and produce output through stdin and stdout.
@@ -278,5 +280,4 @@ fmt.Println("result:", string(resultBytes))
 ```
 
 All of these 5 steps are prone to error. Reducing them to a simple `// offload` annotation and few simple API-calls can significantly reduce the effort required to offload a computation.
-
 

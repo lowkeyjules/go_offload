@@ -1,11 +1,11 @@
 package offload
 
-type Result struct {
-	Offloadable string
-	Args        string
-	Output      []byte
-	Stderr      string
-	Err         error
+type result struct {
+	offloadable string
+	args        string
+	output      []byte
+	stderr      string
+	err         error
 }
 
 type wireReturn struct {
