@@ -72,6 +72,21 @@ func Benchmark(in WorkloadParams) TimingReturn {
 	}
 }
 
+// ============ Distance Example ============
+
+type Coords struct {
+	X, Y float64
+}
+
+// offload
+func Distance(c Coords) float64 {
+	return distance(c.Y, c.X)
+}
+
+func distance(x float64, y float64) float64 {
+	return y - x
+}
+
 func main() {
 
 	if len(os.Args) < 2 {
@@ -109,6 +124,12 @@ func main() {
 		fmt.Println(err3)
 	}
 	fmt.Printf("MatrixMultiplication result from Submit: %v\n", result3)
+
+	result4, err4 := offload.Submit[float64](o, "Distance", Coords{1, 2})
+	if err4 != nil {
+		fmt.Println(err4)
+	}
+	fmt.Printf("Distance result from Submit: %v\n", result4)
 
 	// ========== SubmitAll - Offloading Example: ==========
 
