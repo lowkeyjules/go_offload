@@ -160,18 +160,18 @@ Have fun trying out Go Offload!
 
 ## Manual Workflow: Offloading without annotations
 ___
-This paragraph provides an example of how the offloading would look like without using annotation-driven tools.
+This paragraph provides an example of how the offloading looks like without using annotation-driven tools.
 The following illustrates a minimal example of how the usual offloading pipeline looks like.
 
 ### 1. Writing the Offloadable Module
 The target file will be compiled to WASIp1. This format can receive input and produce output through stdin and stdout.
-This means that encoding and decoding needs to be handles through the offloadable module in addition to the actual computation logic.
-Input is read throught os.Args.
+This means that encoding and decoding needs to be handled through the offloadable module in addition to the actual computation logic.
+Input is read through os.Args.
 
 The following code is a minimal example for receiving arguments, decoding them and putting them as a parameter into a function, back to encoding them into base64.
 
 ```go
-// greeting.go
+// greetings.go
 package main
 
 import (
@@ -180,23 +180,23 @@ import (
 	"os"
 )
 
-func Greeting(name string) string {
+func Greetings(name string) string {
 	return "Hello, " + name + "!"
 }
 
 func main() {
 	raw, _ := base64.StdEncoding.DecodeString(os.Args[1])
-	result := Greeting(string(raw))
+	result := Greetings(string(raw))
 	fmt.Print(base64.StdEncoding.EncodeToString([]byte(result)))
 }
 ```
 
 ### 2. Compiling to WASIp1
-The ordinary Go program still needs to be compiled to wasip1/wasm target, so it can be run by Wasimoff.
+The Go program still needs to be compiled for the wasip1/wasm target, so it can be run by Wasimoff.
 ```bash
-GOOS=wasip1 GOARCH=wasm go build -o greeting.wasm greeting.go
+GOOS=wasip1 GOARCH=wasm go build -o greetings.wasm greetings.go
 ```
-The result is a greeting.wasm binary is now an artifact that gets uploaded to the broker and gets distributed to different provider.
+The result is a greetings.wasm binary which is now an artifact that gets uploaded to the broker and gets distributed across different providers.
 
 ### 3. Uploading Wasm Binary to Broker
 Though there is an API-endpoint for uploading the file to Wasimoff directly in Go, the following example uploads through curl.
@@ -204,7 +204,7 @@ The file can be referenced by its SHA256 on the broker later.
 ```bash
 BROKER="http://localhost:4080"
 
-curl -X POST -H "content-type: application/wasm" "$BROKER/api/storage/upload?name=greeting.wasm" --data-binary "@greeting.wasm"
+curl -X POST -H "content-type: application/wasm" "$BROKER/api/storage/upload?name=greetings.wasm" --data-binary "@greetings.wasm"
 ```
 
 ### 4. Submitting the Task
@@ -227,13 +227,13 @@ func main() {
 
 	ctx := context.TODO()
 
-	ref := "sha256:<hash-of-greeting.wasm>"
+	ref := "sha256:<hash-of-greetings.wasm>"
 	file := &wasimoffv1.File{Ref: &ref}
 
 	request := wasimoffv1.Task_Wasip1_Request{
 		Params: &wasimoffv1.Task_Wasip1_Params{
 			Binary: file,
-			Args:   []string{"greeting.wasm", "<base64-encoded-args>"},
+			Args:   []string{"greetings.wasm", "<base64-encoded-args>"},
 		},
 	}
 
@@ -250,30 +250,33 @@ Note that the SHA256 needs to be constructed by hand.
 
 ### 5. Handling the Result
 Finally, the response needs to be unwrapped, checked for RPC errors, checked for the WASIp1 exit status and decoded.
+The following code continues from step 4. Make sure that ```encoding/base64``` is imported. 
 ```go
 if e := response.GetError(); e != "" {
-fmt.Println("execution error:", e)
-return
+    fmt.Println("execution error:", e)
+    return
 }
 
 out := response.GetOk()
 if out == nil {
-fmt.Println("no output from broker")
-return
+    fmt.Println("no output from broker")
+    return
 }
 
 if status := out.GetStatus(); status != 0 {
-fmt.Printf("exit status %d: %s\n", status, out.GetStderr())
-return
+    fmt.Printf("exit status %d: %s\n", status, out.GetStderr())
+    return
 }
 
 resultBytes, err := base64.StdEncoding.DecodeString(string(out.GetStdout()))
 if err != nil {
-fmt.Println("decode error:", err)
-return
+    fmt.Println("decode error:", err)
+    return
 }
 
 fmt.Println("result:", string(resultBytes))
 ```
 
-All of these 5 steps are prone to error. Reducing them to a simple `// offload` annotation and few simple API-calls can significantly reduce the effort required to offload computation.
+All of these 5 steps are prone to error. Reducing them to a simple `// offload` annotation and few simple API-calls can significantly reduce the effort required to offload a computation.
+
+
