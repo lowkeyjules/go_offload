@@ -37,7 +37,7 @@ func newFileParser(file string) *fileParser {
 }
 
 func (p *fileParser) parse() {
-	makeDir, err := offloadblesDir()
+	makeDir, err := offloadablesDir()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -68,6 +68,16 @@ func (p *fileParser) parse() {
 		usedImports(gd, available, typeImports)
 	}
 
+	// Finds all declared functions (not methods) of parsed file
+	allDeclFuncs := make(map[string]*ast.FuncDecl)
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.FuncDecl)
+		if !ok || gd.Recv != nil {
+			continue
+		}
+		allDeclFuncs[gd.Name.Name] = gd
+	}
+
 	ast.Inspect(file, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
 		if !ok {
@@ -88,6 +98,17 @@ func (p *fileParser) parse() {
 
 				code := wasmTemplate
 
+				helperFuncs := determineHelperFuncs(allDeclFuncs, fn)
+				nameFuncs := make([]string, 0, len(helperFuncs))
+				for name := range helperFuncs {
+					nameFuncs = append(nameFuncs, name)
+				}
+				var helpFuncBuf bytes.Buffer
+				for _, name := range nameFuncs {
+					printer.Fprint(&helpFuncBuf, fset, helperFuncs[name])
+					helpFuncBuf.WriteString("\n\n")
+				}
+
 				payload, err := payloadType(file, fn)
 				if err != nil {
 					log.Fatalf("offload %s: %v", fn.Name.Name, err)
@@ -105,6 +126,7 @@ func (p *fileParser) parse() {
 				printer.Fprint(&fnBuf, fset, fn)
 
 				code = strings.ReplaceAll(code, "{{FUNC_BODY}}", fnBuf.String())
+				code = strings.ReplaceAll(code, "{{HELPER_FUNCS}}", helpFuncBuf.String())
 				code = strings.ReplaceAll(code, "{{FUNC_NAME}}", fn.Name.Name)
 				code = strings.ReplaceAll(code, "{{PAYLOAD}}", payload)
 				code = strings.ReplaceAll(code, "{{TYPE_DECLS}}", typeDecls)
@@ -303,7 +325,29 @@ func collectTypeDecls(fset *token.FileSet, file *ast.File) string {
 	return buf.String()
 }
 
-func offloadblesDir() (string, error) {
+func determineHelperFuncs(allFuncs map[string]*ast.FuncDecl, fn *ast.FuncDecl) map[string]*ast.FuncDecl {
+	calledFuncs := make(map[string]*ast.FuncDecl)
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := call.Fun.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		target, ok := allFuncs[ident.Name]
+		if !ok || target == fn {
+			return true
+		}
+		calledFuncs[ident.Name] = target
+		return true
+	})
+	return calledFuncs
+}
+
+func offloadablesDir() (string, error) {
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("could not determine cache dir: %w", err)

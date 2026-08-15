@@ -4,6 +4,8 @@ package main
 
 {{TYPE_DECLS}}
 
+{{HELPER_FUNCS}}
+
 {{FUNC_BODY}}
 
 type Return struct {
@@ -16,7 +18,6 @@ func fail(msg string) {
 
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(wrapped); err != nil {
-		// last resort
 		os.Exit(1)
 	}
 

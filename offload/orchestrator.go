@@ -287,7 +287,7 @@ func (o *Orchestrator) Close() {
 }
 
 func loadWasm(name string) ([]byte, error) {
-	dir, err := offloadblesDir()
+	dir, err := offloadablesDir()
 	if err != nil {
 		return nil, err
 	}
