@@ -1,7 +1,7 @@
 package main
 
 import (
-	"ba_jw/implementation/offload"
+	"implementation/offload"
 	"encoding/csv"
 	"fmt"
 	"log"

@@ -1,14 +1,11 @@
 package offload
 
+// result struct contains following fields:
+// offloadable - name of the currently offloaded function,
+// output - encoded return value from backend,
+// err - error passed from backend
 type result struct {
 	offloadable string
-	args        string
 	output      []byte
-	stderr      string
 	err         error
-}
-
-type wireReturn struct {
-	ReturnEncoded string
-	ErrMsg        string
 }
